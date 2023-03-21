@@ -1,7 +1,7 @@
 // Package certs implements a certificate signing authority implementation
-// to sign MITM'ed hosts certificates using a self-signed authority.
+// to sign MITM-ed hosts certificates using a self-signed authority.
 //
-// It has uses an LRU-based certificate caching implementation for
+// It uses an LRU-based certificate caching implementation for
 // caching the generated certificates for frequently accessed hosts.
 package certs
 
@@ -9,13 +9,13 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/pem"
-	"os"
-	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/elazarl/goproxy"
 	lru "github.com/hashicorp/golang-lru"
 	"github.com/pkg/errors"
+	fileutil "github.com/projectdiscovery/utils/file"
 )
 
 // Manager implements a certificate signing authority for TLS Mitm.
@@ -39,12 +39,10 @@ const (
 func New(options *Options) (*Manager, error) {
 	manager := &Manager{}
 
-	certFile := path.Join(options.Directory, caCertName)
-	keyFile := path.Join(options.Directory, caKeyName)
+	certFile := filepath.Join(options.Directory, caCertName)
+	keyFile := filepath.Join(options.Directory, caKeyName)
 
-	_, certFileErr := os.Stat(certFile)
-	_, keyFileErr := os.Stat(keyFile)
-	if os.IsNotExist(certFileErr) || os.IsNotExist(keyFileErr) {
+	if !fileutil.FileExists(certFile) || !fileutil.FileExists(keyFile) {
 		if err := manager.createAuthority(certFile, keyFile); err != nil {
 			return nil, errors.Wrap(err, "could not create certificate authority")
 		}

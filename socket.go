@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/tls"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/projectdiscovery/dsl"
+	"github.com/projectdiscovery/proxify/pkg/types"
 )
 
 // SocketProxy - connect two sockets with TLS inspection
@@ -30,11 +30,11 @@ type SocketConn struct {
 	HTTPServer              string
 	sentBytes               uint64
 	receivedBytes           uint64
-	Verbose                 bool
+	Verbosity               types.Verbosity
 	OutputHex               bool
 	Timeout                 time.Duration
-	RequestMatchReplaceDSL  string
-	ResponseMatchReplaceDSL string
+	RequestMatchReplaceDSL  []string
+	ResponseMatchReplaceDSL []string
 	OnRequest               func([]byte) []byte
 	OnResponse              func([]byte) []byte
 }
@@ -51,11 +51,11 @@ type SocketProxyOptions struct {
 	TLSClient               bool
 	TLSServerConfig         *tls.Config
 	TLSServer               bool
-	Verbose                 bool
+	Verbosity               types.Verbosity
 	OutputHex               bool
 	Timeout                 time.Duration
-	RequestMatchReplaceDSL  string
-	ResponseMatchReplaceDSL string
+	RequestMatchReplaceDSL  []string
+	ResponseMatchReplaceDSL []string
 	OnRequest               func([]byte) []byte
 	OnResponse              func([]byte) []byte
 }
@@ -108,7 +108,7 @@ func (p *SocketProxy) Run() error {
 			log.Println(err)
 			return err
 		}
-		go p.Proxy(conn)  //nolint
+		go p.Proxy(conn) //nolint
 	}
 }
 
@@ -119,7 +119,7 @@ func (p *SocketProxy) Proxy(conn net.Conn) error {
 	)
 
 	socketConn.Timeout = p.options.Timeout
-	socketConn.Verbose = p.options.Verbose
+	socketConn.Verbosity = p.options.Verbosity
 	socketConn.OutputHex = p.options.OutputHex
 
 	socketConn.lconn = conn
@@ -222,10 +222,10 @@ func (p *SocketConn) pipe(src, dst io.ReadWriter) {
 		// Client => Proxy => Destination
 		if islocal {
 			// DSL
-			if p.RequestMatchReplaceDSL != "" {
+			for _, expr := range p.RequestMatchReplaceDSL {
 				args := make(map[string]interface{})
 				args["data"] = b
-				newB, err := dsl.EvalExpr(p.RequestMatchReplaceDSL, args)
+				newB, err := dsl.EvalExpr(expr, args)
 				// In case of error use the original value
 				if err != nil {
 					log.Printf("%s\n", err)
@@ -241,10 +241,10 @@ func (p *SocketConn) pipe(src, dst io.ReadWriter) {
 			}
 		} else { // Destination => Proxy => Client
 			// DSL
-			if p.ResponseMatchReplaceDSL != "" {
+			for _, expr := range p.ResponseMatchReplaceDSL {
 				args := make(map[string]interface{})
 				args["data"] = b
-				newB, err := dsl.EvalExpr(p.ResponseMatchReplaceDSL, args)
+				newB, err := dsl.EvalExpr(expr, args)
 				// In case of error use the original value
 				if err != nil {
 					log.Printf("%s\n", err)
@@ -274,7 +274,7 @@ func (p *SocketConn) pipe(src, dst io.ReadWriter) {
 			if err != nil {
 				log.Println(err)
 			} else {
-				b, _ = ioutil.ReadAll(resp.Body)
+				b, _ = io.ReadAll(resp.Body)
 				resp.Body.Close()
 			}
 		}

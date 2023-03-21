@@ -1,8 +1,9 @@
 package logger
 
 import (
+	"bytes"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"strings"
@@ -12,7 +13,7 @@ import (
 	"github.com/projectdiscovery/proxify/pkg/logger/elastic"
 	"github.com/projectdiscovery/proxify/pkg/logger/file"
 	"github.com/projectdiscovery/proxify/pkg/logger/kafka"
-	"github.com/projectdiscovery/stringsutil"
+	stringsutil "github.com/projectdiscovery/utils/strings"
 
 	"github.com/projectdiscovery/proxify/pkg/types"
 )
@@ -23,10 +24,11 @@ const (
 )
 
 type OptionsLogger struct {
-	Verbose      bool
+	Verbosity    types.Verbosity
 	OutputFolder string
 	DumpRequest  bool
 	DumpResponse bool
+	MaxSize      int
 	Elastic      *elastic.Options
 	Kafka        *kafka.Options
 }
@@ -48,10 +50,7 @@ func NewLogger(options *OptionsLogger) *Logger {
 		asyncqueue: make(chan types.OutputData, 1000),
 	}
 	if options.Elastic.Addr != "" {
-		store, err := elastic.New(&elastic.Options{
-			Addr:      options.Elastic.Addr,
-			IndexName: options.Elastic.IndexName,
-		})
+		store, err := elastic.New(options.Elastic)
 		if err != nil {
 			gologger.Warning().Msgf("Error while creating elastic logger: %s", err)
 		} else {
@@ -114,6 +113,10 @@ func (l *Logger) AsyncWrite() {
 
 			outputdata.DataString = fmt.Sprintf(outputdata.Format, outputdata.Data)
 
+			if l.options.MaxSize > 0 {
+				outputdata.DataString = stringsutil.Truncate(outputdata.DataString, l.options.MaxSize)
+			}
+
 			for _, store := range l.Store {
 				err := store.Save(outputdata)
 				if err != nil {
@@ -134,9 +137,9 @@ func (l *Logger) LogRequest(req *http.Request, userdata types.UserData) error {
 		l.asyncqueue <- types.OutputData{Data: reqdump, Userdata: userdata}
 	}
 
-	if l.options.Verbose {
+	if l.options.Verbosity >= types.VerbosityVeryVerbose {
 		contentType := req.Header.Get("Content-Type")
-		b, _ := ioutil.ReadAll(req.Body)
+		b, _ := io.ReadAll(req.Body)
 		if isASCIICheckRequired(contentType) && !govalidator.IsPrintableASCII(string(b)) {
 			reqdump, _ = httputil.DumpRequest(req, false)
 		}
@@ -158,16 +161,21 @@ func (l *Logger) LogResponse(resp *http.Response, userdata types.UserData) error
 	if err != nil {
 		return err
 	}
+	respdumpNoBody, err := httputil.DumpResponse(resp, false)
+	if err != nil {
+		return err
+	}
 	if l.options.OutputFolder != "" || l.options.Kafka.Addr != "" || l.options.Elastic.Addr != "" {
 		l.asyncqueue <- types.OutputData{Data: respdump, Userdata: userdata}
 	}
-	if l.options.Verbose {
+	if l.options.Verbosity >= types.VerbosityVeryVerbose {
 		contentType := resp.Header.Get("Content-Type")
-		b, _ := ioutil.ReadAll(resp.Body)
-		if isASCIICheckRequired(contentType) && !govalidator.IsPrintableASCII(string(b)) {
-			respdump, _ = httputil.DumpResponse(resp, false)
+		bodyBytes := bytes.TrimPrefix(respdump, respdumpNoBody)
+		if isASCIICheckRequired(contentType) && !govalidator.IsPrintableASCII(string(bodyBytes)) {
+			gologger.Silent().Msgf("%s", string(respdumpNoBody))
+		} else {
+			gologger.Silent().Msgf("%s", string(respdump))
 		}
-		gologger.Silent().Msgf("%s", string(respdump))
 	}
 	return nil
 }
